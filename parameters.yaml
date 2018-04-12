@@ -1,0 +1,19 @@
+---
+# Stage-specific deployment parameters. If a parameter is not specified for a
+# stage, the value in the _default group will be used.
+#
+# * redis_node_type: Type of the nodes in the Redis cluster
+#
+# * redis_number_nodes: Number of nodes in the Redis cluster
+
+_default:
+    redis_node_type: cache.t2.medium
+    redis_num_nodes: 1
+
+DEV:
+    redis_node_type: cache.m3.large
+    redis_num_nodes: 1
+
+PROD:
+    redis_node_type: cache.m4.xlarge
+    redis_num_nodes: 2
