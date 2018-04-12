@@ -1,0 +1,211 @@
+---
+hugo2:
+    description:
+        FindHotel's HTTP API for data products
+
+    tags:
+        "findhotel:project": "hugo"
+        "findhotel:squad": "de"
+
+    layers:
+
+        # ================================================================== VPC
+        - layer: vpc
+          layer_type: vpc
+          description: Networking layout for Hugo ({{stage}})
+          private_subnets:
+            - cidr: 10.45.255.0/24
+
+
+        # =================================================================== SG
+        - layer: security
+          layer_type: security
+          description: Security groups for Hugo ({{stage}})
+
+          vpc:
+              ref:
+                  parser: layer_output
+                  parameters:
+                      layer_name: vpc
+                      output_name: VpcId
+          security_groups:
+              - name: HugoLambdas
+                description: Security group for Hugo lambda fuctions
+
+              - name: HugoElasticache
+                description: Security group for Hugo Elasticache
+                ingress_rules:
+                  - ip_protocol: tcp
+                    from_port: 6379
+                    to_port: 6379
+                    source_security_group_id: {"Ref": "HugoLambdas"}
+
+
+        # ========================================================== ELASTICACHE
+        - layer: ec
+          layer_type: elasticache
+          description: Elasticache for Hugo ({{stage}})
+
+          engine: redis
+          cache_node_type: {{redis_node_type}}
+          num_cache_nodes: {{redis_num_nodes}}
+          subnet_ids:
+              - ref:
+                  parser: layer_output
+                  parameters:
+                      layer_name: vpc
+                      output_name: PrivateSubnet1
+          vpc_security_group_ids:
+              - ref:
+                  parser: layer_output
+                  parameters:
+                      layer_name: security
+                      output_name: HugoElasticache
+
+
+        # ================================================================== API
+        - layer: api
+          layer_type: sam
+          description: API for Hugo ({{stage}})
+          runtime: python2.7
+          lambda_dependencies:
+              - hugo
+              - requirements-lambda.txt
+          iam_actions:
+              - action: "logs:*"
+                resource: "*"
+              - action: "ec2:CreateNetworkInterface"
+                resource: "*"
+              - action: "ec2:DeleteNetworkInterface"
+                resource: "*"
+              - action: "ec2:DescribeNetworkInterfaces"
+                resource: "*"
+              - action: "lambda:InvokeFunction"
+                resource: "*"
+              - action: "s3:*"
+                resource: "arn:aws:s3:::fh-hugo/*"
+              - action: "s3:*"
+                resource: "arn:aws:s3:::fh-hugo"
+              - action: "xray:PutTraceSegments"
+                resource: "*"
+              - action: "xray:PutTelemetryRecords"
+                resource: "*"
+          subnet_ids:
+              - ref:
+                  parser: layer_output
+                  parameters:
+                      layer_name: vpc
+                      output_name: PrivateSubnet1
+          sg_ids:
+              - ref:
+                  parser: layer_output
+                  parameters:
+                      layer_name: security
+                      output_name: HugoLambdas
+          env_vars:
+              ELASTICACHE_ENDPOINT:
+                  ref:
+                      parser: layer_output
+                      parameters:
+                          layer_name: ec
+                          output_name: CacheClusterAddress
+              ELASTICACHE_PORT:
+                  ref:
+                      parser: layer_output
+                      parameters:
+                          layer_name: ec
+                          output_name: CacheClusterPort
+          simple_table: no
+          alert_subscribers:
+            - "arnaud@findhotel.net"
+
+          swagger:
+            swagger_version: 2.0
+            info:
+                # The title is used as the name of the API in API Gateway
+                title: hugo2-{{stage}}
+                description: Hugo API
+                version: "1.0.0"
+            schemes:
+                - https
+            produces:
+                - application/json
+            consumes:
+                - application/json
+            response_headers_mapping:
+                - header_name: hugo_response
+                  header_type: string
+                  description: "Hugo 200 everything fine response"
+                  status_code: 200
+                  default: yes
+                - header_name: hugo_response
+                  header_type: string
+                  description: "Hugo 544 processing timeout response"
+                  status_code: 544
+                  default: no
+            aws_region: eu-west-1
+            security:
+                - name: api_key
+                  type: apiKey
+                  name: x-api-key
+                  in: header
+            paths:
+              - functions:
+                  - name: Hello
+                    handler: "hugo.dev:hello"
+                    api_path: /
+                    http_method: get
+                    memory_size: 128
+
+              - functions:
+                  - name: RedisHealth
+                    handler: "hugo.dev:redis_health"
+                    api_path: /redis/health
+                    http_method: get
+                    timeout: 120
+                    memory_size: 128
+
+              - functions:
+                  - name: Timeout
+                    handler: "hugo.dev:timeout"
+                    api_path: /timeout
+                    http_method: get
+                    memory_size: 128
+
+              - functions:
+                  - name: SortProviderOffers
+                    handler: "hugo.offers:sort"
+                    api_path: /offers/sort
+                    http_method: post
+                    memory_size: 512
+                    timeout: 3
+                    keep_warm: yes
+                    tracing_config: Active
+
+              - functions:
+                  - name: StoreOffersWeight
+                    handler: "hugo.offers:store_weights"
+                    api_path: /offers-weights/store
+                    http_method: get
+                    memory_size: 448
+                    timeout: 300
+                    tracing_config: Active
+
+              - functions:
+                  - name: SimilarHotels
+                    handler: "hugo.hotel:similar_hotels"
+                    api_path: /hotels/similar
+                    http_method: post
+                    memory_size: 512
+                    timeout: 3
+                    keep_warm: yes
+                    tracing_config: Active
+
+              - functions:
+                  - name: StoreSimilarHotels
+                    handler: "hugo.hotel:store_similarities"
+                    api_path: /similar-hotels/store
+                    http_method: get
+                    memory_size: 1152
+                    timeout: 300
+                    tracing_config: Active
